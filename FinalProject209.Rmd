@@ -1,0 +1,715 @@
+---
+title: "MLB Payroll vs Wins"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: 
+      bootswatch: simplex
+      navbar-bg: "red"
+    orientation: columns
+    vertical_layout: fill
+    source_code: embed
+---
+
+<style>
+.chart-title {  /* chart_title  */
+   font-size: 16px;
+  }
+body{ /* Normal  */
+      font-size: 14px;
+  }
+</style>
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(pacman)
+
+p_load(tidyverse, maps, viridis, ggplot2, plotly, htmltab, readr, leaflet, scales, plyr, reshape2, ggcorrplot, gridExtra)
+```
+
+Introduction
+===
+
+Column {data-width = 500} 
+---
+
+### A Brief History & Background Information
+
+The Cincinnati Red Stockings played their first game in 1869, and by doing so, began the sport of baseball we know and love today. Since then, Major League Baseball has grown into two leagues, the American League and National League, each with three divisions of five teams. In total, this makes thirty major league teams. Twenty-nine reside in the United States and one calls Toronto, Canada its home.
+
+We are currently in the Wild Card Era of Baseball. This era began in 1995, after the strike on financial disagreements, and is named after the postseason format. In 2022, MLB added a third wildcard per league which expanded the postseason from ten teams to twelve. The twelve teams include each division winner in the American and National League and each league's three wildcards.
+
+There are 162 scheduled games for each team during the season, which runs from the end of March to October. Every team is scheduled an equal split of home and away games during the season.
+
+### Why Payroll vs Wins?
+
+Major League Baseball does not currently have a "hard salary cap" and this is unlike all other North American Men's Professional Sports. Instead, MLB has a "Competitive Balance Tax", or a luxury tax system. If an owner exceeds the Competitive Balance Tax threshold, they are subject to an increasing tax rate. Some owners are treating the threshold as a "soft-cap" while some simply seem not to care. This discrepancy is significant and upsetting to the many fans of losing teams whose owners choose year after year to "save money" while simultaneously profiting off their team.
+
+Column {data-width = 500} 
+---
+
+### Goals
+
+The goal of this project is to explore the connection, if such exists, between a teams payroll and how many games they win. I believe that this is a quite topical subject because of the recent Collective Bargaining Agreement following the MLB lockout before the 2021 season, similar to the strike in 1994. In the last few years, more and more teams are spending an increasing amount of money, but teams with shockingly low payrolls still exist. This project will explore whether those low payroll teams are saving money intelligently, or doomed to lose.
+
+
+Questions this project aims to solve:
+
+  - Do MLB teams with a higher payroll win more games?
+  
+  - What outside, non-performance related factors cause teams to spend more money?
+  
+  - What outside, non-performance related factors cause teams to win more games?
+  
+  - How has 2022 and 2023 (so far) compared to the last five years in terms of
+      payroll vs wins and other explored factors?
+
+Data Introduction
+===
+
+Column {.tabset data-width=550}
+---
+
+### 2022 Payroll and Wins Dataset
+
+```{r}
+payrollandwins22 <- read.csv("payroll22.csv")
+lastfiveyears <- read.csv("lastfiveyears.csv")
+citydata <- read.csv("citydata.csv")
+currentdata <- read.csv("standings23.csv")
+
+payrollandwins22 <- payrollandwins22[ , names(payrollandwins22) %in% c("team.name", "abb", "league", "divison", "team.payroll", "w", "l")]
+
+DT::datatable(payrollandwins22, rownames = FALSE, 
+              colnames = c("Team Name", "Abbreviation", "League", "Division", "Payroll", "Wins", "Losses"))
+```
+
+### 2018-2022 Total Payroll and Wins Dataset
+
+```{r}
+lastfiveyears <- lastfiveyears[ , names(lastfiveyears) %in% c("team.name", "w", "team.payroll")]
+
+DT::datatable(lastfiveyears, rownames = FALSE, 
+              colnames = c("Team Name", "Wins", "Payroll"))
+```
+
+### Location Dataset
+
+```{r}
+citydata <- citydata[ , names(citydata) %in% c("team.name", "stadium.name", "lat", "long", "feet.above.sea.level", "state", "income.tax.percentage", "city.population")]
+
+DT::datatable(citydata, rownames = FALSE, 
+              colnames = c("Team Name", "Stadium Name", "Latitude", "Longitude", "Feet Above Sea Level", "State", "Income Tax %", "City Population"))
+```
+
+### Variable Descriptions
+
+Team Name: Name of baseball team.
+
+Stadium Name: Name of the city the baseball team plays in.
+
+League: Teams are split into two leagues, American and National. This is not based on location or any outside factors.
+
+Division: Each league is split into three divisions, Central, East, and West, based on location.
+
+Team Payroll: Money a team spends on its players, in USD.
+
+Wins: How many games a team has won (out of 162).
+
+Losses: How many games a team has lost (out of 162).
+
+Latitude: Latitudinal coordinates of the stadium.
+
+Longitude: Longitudinal coordinates of the stadium.
+
+Feet Above Sea Level: Elevation of the stadium based on lat and long coordinates.
+
+State: Which US state (or Canadian province) the baseball team (stadium) is located in.
+
+Income Tax %: Based on the average major league salary of $4 million, tax percentage on income.
+
+City Population: Population of the city where the team is located (not the name of the time if different)
+
+
+Map Breakdown
+===
+
+Column {data-width = 500} 
+---
+
+```{r}
+citydata <- citydata %>% 
+  inner_join(payrollandwins22, by = "team.name")
+
+citydata2 <- citydata %>% 
+  inner_join(payrollandwins22, by = "team.name")
+```
+
+### Interactive Team Map with Payroll Groups
+
+```{r map by payroll}
+mlbgroups1 <- function(x) {
+  if(x %in% c('Los Angeles Dodgers', 'New York Mets', 
+              'New York Yankees', 'Philadelphia Phillies',
+              'San Diego Padres', 'Boston Red Sox', 
+              'Chicago White Sox', 'Los Angeles Angels',
+              'Atlanta Braves', 'Houston Astros')) {
+    y <- 'Top 10 Spenders'
+  }else if (x %in% c('Toronto Blue Jays', 
+        'St. Louis Cardinals', 'San Francisco Giants', 
+                     'Chicago Cubs', 'Colorado Rockies',
+        'Texas Rangers', 'Minnesota Twins', 'Detroit Tigers',
+        'Milwaukee Brewers', 'Washington Nationals')) {
+  y <- 'Middle 10 Spenders'
+  }else {
+    y <- 'Last 10 Spenders'
+    }
+  return(y) 
+}
+
+mlbColor <- function(x) {
+  
+  if(x == 'Top 10 Spenders') {
+    y <- 'lightblue'}
+    
+  else if(x == 'Middle 10 Spenders'){
+    y <- 'orange'}
+    
+  else {
+    y <- 'red'}
+    
+  return(y)}
+
+  
+stadiums <- read.csv("citydata1.csv") 
+
+stadiums <- stadiums %>% 
+  inner_join(payrollandwins22, by = "team.name")
+
+stadiums <- stadiums %>% 
+  mutate(divide = sapply(X = team.name, FUN = mlbgroups1),
+  divide1color = sapply(X = team.name, FUN = mlbColor),
+  teamLabs = paste0('Team: ', team.name, "<br />", 'Stadium: ', stadium.name,
+                    "<br />", 'Payroll: ', team.payroll, " (USD)"))
+  
+stadiums$long <- as.numeric(stadiums$long)  
+
+stadiums <- stadiums %>% 
+  mutate_if(is.numeric, ~replace_na(., -80.220352))
+
+icons <- makeAwesomeIcon(
+  icon = 'circle',
+  iconColor = 'black',
+  library = 'glyphicon',
+  markerColor = ifelse(stadiums$team.name %in% c('Los Angeles Dodgers', 'New York Mets', 'New York Yankees', 'Philadelphia Phillies', 'San Diego Padres', 'Boston Red Sox', 'Chicago White Sox', 'Los Angeles Angels', 'Atlanta Braves', 'Houston Astros'), 'lightblue',
+  ifelse(stadiums$team.name %in% c('Toronto Blue Jays', 'St. Louis Cardinals', 'San Francisco Giants', 'Chicago Cubs', 'Colorado Rockies', 'Texas Rangers', 'Minnesota Twins', 'Detroit Tigers', 'Milwaukee Brewers', 'Washington Nationals'), 'orange',
+  ifelse(stadiums$team.name %in% c('Cincinnati Reds', 'Seattle Mariners', 'Kansas City Royals', 'Miami Marlins', 'Arizona Diamondbacks', 'Tampa Bay Rays', 'Cleveland Guardians', 'Baltimore Orioles', 'Pittsburgh Pirates', 'Oakland Athletics'), 'red', 'black')))
+)
+
+makeColorandNames <- data.frame(divisions = c('Top 10 Spenders', 'Middle 10 Spenders', 'Bottom 10 Spenders'), division.cent = c('lightblue','orange','red'))
+
+leaflet(data = stadiums) %>% 
+  setView(lng = -98.5795, lat = 39.8283, zoom = 3.25) %>% 
+  addTiles() %>% 
+  addAwesomeMarkers(~long, ~lat, icon = icons, popup = ~teamLabs) %>% 
+  addLegend(position = 'bottomleft', colors = makeColorandNames[,2], labels = makeColorandNames[,1], opacity = 1, title = 'Groups by Payroll')
+
+```
+
+Column {data-width = 500} 
+---
+
+### Interactive Team Map with Win Groups
+
+```{r map by wins}
+mlbgroups2 <- function(x) {
+  if(x %in% c('Los Angeles Dodgers', 'Houston Astros', 'Atlanta Braves', 'New York Mets', 'New York Yankees', 'St. Louis Cardinals', 'Cleveland Guardians', 'Toronto Blue Jays', 'Seattle Mariners', 'San Diego Padres')){
+              
+    y <- 'Top 10 (Games Won)'
+    
+  }else if (x %in% c('Philadelphia Phillies', 'Milwaukee Brewers', 'Tampa Bay Rays', 'Baltimore Orioles', 'Chicago White Sox', 'San Francisco Giants', 'Minnesota Twins', 'Boston Red Sox', 'Chicago Cubs', 'Arizona Diamondbacks')) {
+  y <- 'Middle 10 (Games Won)'
+  
+  }else {
+    y <- 'Last 10 (Games Won)'
+    }
+  return(y) 
+}
+
+mlbColor2 <- function(x) {
+  
+  if(x == 'Top 10 (Games Won)') {
+    y <- 'lightblue'}
+    
+  else if(x == 'Middle 10 (Games Won)'){
+    y <- 'orange'}
+    
+  else {
+    y <- 'red'}
+    
+  return(y)}
+  
+  
+stadiums2 <- read.csv("citydata1.csv") 
+
+stadiums2 <- stadiums2 %>% 
+  inner_join(payrollandwins22, by = "team.name")
+
+stadiums2 <- stadiums2 %>% 
+  mutate(divide2 = sapply(X = team.name, FUN = mlbgroups2),
+  divide2color = sapply(X = team.name, FUN = mlbColor2),
+  teamLabs = paste0('Team: ', team.name, "<br />", 'Stadium: ', stadium.name,
+                    "<br />", 'Season Wins: ', w))
+  
+stadiums2$long <- as.numeric(stadiums2$long) 
+
+stadiums2 <- stadiums2 %>% 
+  mutate_if(is.numeric, ~replace_na(., -80.220352))
+
+icons2 <- makeAwesomeIcon(
+  icon = 'circle',
+  iconColor = 'black',
+  library = 'glyphicon',
+  markerColor = ifelse(stadiums2$team.name %in% c('Los Angeles Dodgers', 'Houston Astros', 'Atlanta Braves', 'New York Mets', 'New York Yankees', 'St. Louis Cardinals', 'Cleveland Guardians', 'Toronto Blue Jays', 'Seattle Mariners', 'San Diego Padres'), 'lightblue',
+  ifelse(stadiums2$team.name %in% c('Philadelphia Phillies', 'Milwaukee Brewers', 'Tampa Bay Rays', 'Baltimore Orioles', 'Chicago White Sox', 'San Francisco Giants', 'Minnesota Twins', 'Boston Red Sox', 'Chicago Cubs', 'Arizona Diamondbacks'), 'orange',
+  ifelse(stadiums2$team.name %in% c('Los Angeles Angels', 'Miami Marlins', 'Texas Rangers', 'Colorado Rockies', 'Detroit Tigers', 'Kansas City Royals', 'Pittsburgh Pirates', 'Cincinnati Reds', 'Oakland Athletics',  'Washington Nationals'), 'red', 'black')))
+)
+
+makeColorandNames2 <- data.frame(divisions = c('Top 10 (Games Won)', 'Middle 10 (Games Won)', 'Bottom 10 (Games Won)'), division.cent = c('lightblue','orange','red'))
+
+leaflet(data = stadiums2) %>% 
+  setView(lng = -98.5795, lat = 39.8283, zoom = 3.25) %>% 
+  addTiles() %>% 
+  addAwesomeMarkers(~long, ~lat, icon = icons2, popup = ~teamLabs) %>% 
+  addLegend(position = 'bottomleft', colors = makeColorandNames2[,2], labels = makeColorandNames2[,1], opacity = 1, title = 'Groups by Wins')
+```
+
+Payroll vs Wins
+===
+
+Column {.tabset data-width=550}
+---
+
+### Payroll 
+
+```{r inputs}
+payroll22 <- read.csv("payroll22.csv")
+standings22 <- read.csv("standings22.csv")
+lastfiveyears <- read.csv("lastfiveyears.csv")
+
+stadiumdata <- read.csv("citydata1.csv")
+
+payroll22$team.payroll <- gsub(",", "", payroll22$team.payroll)
+payroll22$team.payroll <- as.numeric(payroll22$team.payroll)
+
+avgpayroll22 <- mean(payroll22$team.payroll)
+avgwins <- mean(payroll22$w)
+
+payroll22$team.name <- with(payroll22, reorder(team.name, team.payroll))
+```
+
+```{r graph of all teams 2022 payroll}
+plot2 <- ggplot(payroll22, aes(x = team.payroll, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "2022 Team Payrolls", x = "Payroll (USD)", y = "Team Name") + geom_vline(xintercept = 100000000) + geom_vline(xintercept = 200000000) + geom_vline(aes(xintercept=mean(team.payroll),
+                 color="average"), linetype="dashed", linewidth = 1)
+
+(plot2 <- plot2 + scale_x_continuous(labels = comma))
+```
+
+### Wins
+
+```{r graph of all teams 2022 wins}
+payroll22$team.name <- with(payroll22, reorder(team.name, w))
+
+ggplot(payroll22, aes(x = w, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "2022 Team Wins", x = "Wins", y = "Team Name") + geom_vline(aes(xintercept=avgwins,
+                 color="average"), linetype="dashed", linewidth = 1)
+```
+
+Column {.tabset data-width=550}
+---
+
+### Payroll vs Wins
+
+```{r scatterplot}
+ggplot(payroll22, aes(x = w, y = team.payroll)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)") + geom_vline(xintercept = avgwins) + geom_hline(yintercept = avgpayroll22) + geom_label(
+  label = payroll22$abb,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+```
+
+Note: COL behind TEX
+
+```{r smooth scatterplot}
+ggplot(payroll22, aes(x = w, y = team.payroll)) + geom_smooth() + scale_y_continuous(labels = comma) + labs(title = "2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)")
+```
+
+Last 5 Years
+===
+
+Column {.tabset data-width=550}
+---
+
+### Total Payroll and Wins 2018-2022 
+
+```{r}
+lastfiveyears$team.payroll <- gsub(",", "", lastfiveyears$team.payroll)
+lastfiveyears$team.payroll <- as.numeric(lastfiveyears$team.payroll)
+
+avg5yrspayroll <- mean(lastfiveyears$team.payroll)
+avg5yrswins <- mean(lastfiveyears$w)
+
+lastfiveyears$team.name <- with(lastfiveyears, reorder(team.name, team.payroll))
+```
+
+```{r graph of all teams 2018-2022 payroll}
+plot3 <- ggplot(lastfiveyears, aes(x = team.payroll, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "2018-2022 Total Team Payrolls", x = "Payroll (USD)", y = "Team Name") + geom_vline(xintercept = 500000000) + geom_vline(xintercept = 1000000000) + geom_vline(aes(xintercept=mean(team.payroll),
+                 color="average"), linetype="dashed", linewidth = 1)
+
+(plot3 <- plot3 + scale_x_continuous(labels = comma))
+```
+
+```{r graph of all teams 2018-2022 wins}
+lastfiveyears$team.name <- with(lastfiveyears, reorder(team.name, w))
+
+ggplot(lastfiveyears, aes(x = w, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "2018-2022 Total Team Wins", x = "Wins", y = "Team Name") + geom_vline(aes(xintercept=avg5yrswins,
+                 color="average"), linetype="dashed", linewidth = 1)
+```
+
+### 2018-2022 Payroll vs Wins
+
+```{r scatterplot2 with averages}
+ggplot(lastfiveyears, aes(x = w, y = team.payroll)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "2018-2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)") + geom_vline(xintercept = avg5yrswins) + geom_hline(yintercept = avg5yrspayroll) + geom_label(
+  label = lastfiveyears$abb,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+```
+
+Note: CHC underneath NYM
+
+```{r smooth scatterplot2}
+ggplot(lastfiveyears, aes(x = w, y = team.payroll)) + geom_smooth() + scale_y_continuous(labels = comma) + labs(title = "2018-2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)")
+```
+
+### Comparing Trends
+
+```{r, figures-side, fig.show="hold", out.width="50%"}
+ggplot(lastfiveyears, aes(x = w, y = team.payroll)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "2018-2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)")
+
+ggplot(payroll22, aes(x = w, y = team.payroll)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)")
+```
+
+### Comparing Trends 2
+
+```{r, figures-side2, fig.show="hold", out.width="50%"}
+ggplot(lastfiveyears, aes(x = w, y = team.payroll)) + geom_smooth() + scale_y_continuous(labels = comma) + labs(title = "2018-2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)")
+
+ggplot(payroll22, aes(x = w, y = team.payroll)) + geom_smooth() + scale_y_continuous(labels = comma) + labs(title = "2022 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)")
+```
+
+Other Factors
+===
+
+Column {.tabset data-width=550}
+---
+
+### Home Game Attendance
+
+```{r}
+hgattend <- read.csv("2022attendance.csv")
+
+hgattend$total.attendance <- gsub(",", "", hgattend$total.attendance)
+hgattend$total.attendance <- as.numeric(hgattend$total.attendance)
+
+avgattend <- mean(hgattend$total.attendance)
+
+hgattend$team.name <- with(hgattend, reorder(team.name, total.attendance))
+```
+
+```{r}
+plot4 <- ggplot(hgattend, aes(x = total.attendance, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "2022 Total Home Game Attdendance", x = "Total Fans in Attendance Throughout the Season", y = "Team Name") + geom_vline(aes(xintercept=avgattend,
+                 color="average"), linetype="dashed", linewidth = 1) 
+
+(plot4 <- plot4 + scale_x_continuous(labels = comma))
+```
+
+### Attendance vs Payroll and Wins
+
+```{r, figures-side3, fig.show="hold", out.width="50%"}
+hgattend <- hgattend %>% 
+  inner_join(payroll22, by = "team.name")
+
+ggplot(hgattend, aes(x = team.payroll, y = total.attendance)) + geom_point() + scale_y_continuous(labels = comma) + scale_x_continuous(labels = comma) + labs(title = "2022 Team Payroll vs Attendance", x = "Payroll (USD)", y = "Number of Attendants") + geom_label(
+  label = hgattend$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+
+ggplot(hgattend, aes(x = w, y = total.attendance)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "2022 Total Attendance vs Team Wins", x = "Wins", y = "Number of Attendants") + geom_label(
+  label = hgattend$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+```
+
+Note1: COL behind CHC, HOU behind TOR
+Note2: BOS behind CHC, NYY behind ATL, SEA behind PHI
+
+### Stadium Elevation
+
+```{r}
+citydata <- read.csv("citydata.csv")
+
+citydata <- citydata %>% 
+  inner_join(payroll22, by = "team.name")
+
+citydata$team.payroll <- gsub(",", "", citydata$team.payroll)
+citydata$team.payroll <- as.numeric(citydata$team.payroll)
+
+citydata$team.name <- with(citydata, reorder(team.name, feet.above.sea.level))
+
+avgelevation <- mean(citydata$feet.above.sea.level)
+```
+
+```{r}
+plot5 <- ggplot(citydata, aes(x = feet.above.sea.level, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "MLB  Stadium Elevations", x = "Feet Above Sea Level", y = "Team Name") + geom_vline(aes(xintercept= avgelevation,
+                 color="average"), linetype="dashed", linewidth = 1)
+
+plot5
+```
+
+### Elevation vs Payroll and Wins
+
+```{r, figures-side4, fig.show="hold", out.width="50%"}
+ggplot(citydata, aes(x = team.payroll, y = feet.above.sea.level)) + geom_point() + scale_y_continuous(labels = comma) + scale_x_continuous(labels = comma) + labs(title = "2022 Team Payroll vs Elevation", x = "Payroll (USD)", y = "Distance Above Sea Level (feet)") + geom_label(
+  label = citydata$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+
+ggplot(citydata, aes(x = w, y = feet.above.sea.level)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "Stadium Elevation vs Team Wins", x = "Wins", y = "Distance Above Sea Level (feet)") + geom_label(
+  label = citydata$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+```
+
+### State Income Tax
+
+```{r}
+citydata$team.name <- with(citydata, reorder(team.name, income.tax.percentage))
+
+avgtax <- mean(citydata$income.tax.percentage)
+
+plot6 <- ggplot(citydata, aes(x = income.tax.percentage, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "MLB  State Income Tax Percentages", x = "Tax Percentage on Income", y = "Team Name") + geom_vline(aes(xintercept= avgtax,
+                 color="average"), linetype="dashed", linewidth = 1)
+
+plot6
+```
+
+### Tax vs Payroll and Wins
+
+```{r, figures-side5, fig.show="hold", out.width="50%"}
+ggplot(citydata, aes(x = team.payroll, y = income.tax.percentage)) + geom_point() + scale_y_continuous(labels = comma) + scale_x_continuous(labels = comma) + labs(title = "2022 Team Payroll vs State Income Tax", x = "Payroll (USD)", y = "State Income Tax (Percentage)") + geom_label(
+  label = citydata$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+
+ggplot(citydata, aes(x = w, y = income.tax.percentage)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "State Income Tax vs Team Wins", x = "Wins", y = "Income Tax (percentage)") + geom_label(
+  label = citydata$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+```
+
+### City Population
+
+```{r}
+citydata$team.name <- with(citydata, reorder(team.name, city.population))
+
+avgpop <- mean(citydata$city.population)
+
+plot7 <- ggplot(citydata, aes(x = city.population, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "MLB  City Populations", x = "Residents in City", y = "Team Name") + geom_vline(aes(xintercept= avgpop,
+                 color="average"), linetype="dashed", linewidth = 1)
+
+(plot7 <- plot7 + scale_x_continuous(labels = comma))
+```
+
+### Population vs Payroll and Wins
+
+```{r, figures-side6, fig.show="hold", out.width="50%"}
+ggplot(citydata, aes(x = team.payroll, y = city.population)) + geom_point() + scale_y_continuous(labels = comma) + scale_x_continuous(labels = comma) + labs(title = "2022 Team Payroll vs City Population", x = "Payroll (USD)", y = "Residents") + geom_label(
+  label = citydata$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+
+ggplot(citydata, aes(x = w, y = city.population)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "City Population vs Team Wins", x = "Wins", y = "Residents") + geom_label(
+  label = citydata$abb.x,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+```
+
+2023
+===
+
+Column {.tabset data-width=550}
+---
+
+### A Way-Too-Early Look at This Season
+
+New rules, players hot off the World Baseball Classic, Oakland moving to Las Vegas?
+
+It's way too early to really tell anything from this season, but it's always fun to see how the stats stack up so far.
+
+For the sake of this project and exploration, current* means the start of the 2023 season through April 30th. Each team has played roughly 28 games, on average. However, this does mean not all teams have played the same amount of games and payroll can still change.
+
+```{r}
+currentdata <- read.csv("standings23.csv")
+
+currentdata$team.name <- with(currentdata, reorder(team.name, team.payroll))
+
+avgpayroll23 <- 160272657.9
+avgwins23 <- mean(currentdata$w)
+```
+
+### Current* Team Payrolls
+
+```{r}
+currentdata$team.name <- with(currentdata, reorder(team.name, team.payroll))
+
+plot8 <- ggplot(currentdata, aes(x = team.payroll, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "2023 MLB Team Payrolls", x = "Payroll (USD)", y = "Team Name") + geom_vline(aes(xintercept= avgpayroll23,
+                 color="average"), linetype="dashed", linewidth = 1)
+
+(plot8 <- plot8 + scale_x_continuous(labels = comma))
+```
+
+### Current* Team Wins
+
+```{r}
+currentdata$team.name <- with(currentdata, reorder(team.name, w))
+
+ggplot(currentdata, aes(x = w, y = team.name)) + geom_bar(fill = "darkred", stat = "identity") + labs(title = "2023 MLB Team Wins", x = "Wins", y = "Team Name") + geom_vline(aes(xintercept= avgwins23,
+                 color="average"), linetype="dashed", linewidth = 1)
+```
+
+### Current* Payroll vs Wins
+
+```{r, figures-side7, fig.show="hold", out.width="50%"}
+ggplot(currentdata, aes(x = w, y = team.payroll)) + geom_point() + scale_y_continuous(labels = comma) + labs(title = "2023 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)") + geom_vline(xintercept = avgwins23) + geom_hline(yintercept = avgpayroll23) + geom_label(
+  label = currentdata$abb,
+  nudge_x = 0.25, nudge_y = 0.25,
+  check_overlap = T
+)
+
+ggplot(currentdata, aes(x = w, y = team.payroll)) + geom_smooth() + scale_y_continuous(labels = comma) + labs(title = "2023 Team Payroll vs Team Wins", x = "Wins", y = "Payroll (USD)")
+```
+
+Note: PHI behind SD
+
+### Comparison
+
+The Tampa Bay Rays, who started the season 13-0, are a significant outlier to the results shown thus far in the project. They have a famously low(er) payroll but have recently seemed to "pull it off" with four playoff appearances in the last four seasons. 
+
+On the other hand, the St. Louis Cardinals are off to their worst start since 1973.
+After April 30th, they sit 10-19 with last place in the NL Central, despite having Nolan Arenado and Paul Goldschmidt (3rd and 1st place vote-getters in the 2022 MVP) and signing William Contreras after the retirement of their beloved Yadier Molina.
+
+However, as stated before, it is simply too early to make any definitive statements. As Dodger Legend Tommy Lasorda once said, “No matter how good you are, you’re going to lose one-third of your games. No matter how bad you are, you’re going to win one-third of your games. It’s the other third that makes the difference.” 
+
+Conclusion
+===
+
+Column {.tabset data-width=550}
+---
+
+### 2018-2022 Correlation Matrix
+
+```{r}
+lastfiveyears <- lastfiveyears %>% 
+  inner_join(citydata2, by = "team.name")
+
+lastfiveyears <- select(lastfiveyears, feet.above.sea.level, income.tax.percentage, city.population, team.payroll, w)
+
+corr1 <- cor(lastfiveyears)
+
+p.mat <- cor_pmat(lastfiveyears)
+
+ggcorrplot(corr1, method = "circle")
+```
+
+### 2022 Correlation Matrix
+
+```{r}
+citydata$long <- as.numeric(citydata$long)  
+
+citydata <- citydata %>% 
+  mutate_if(is.numeric, ~replace_na(., -80.220352))
+
+citydata$team.payroll <- gsub(",", "", citydata$team.payroll)
+citydata$team.payroll <- as.numeric(citydata$team.payroll)
+
+citydata <- select(citydata, feet.above.sea.level, income.tax.percentage, city.population, team.payroll, w)
+
+corr2 <- cor(citydata)
+
+p.mat <- cor_pmat(citydata)
+
+ggcorrplot(corr2, method = "circle")
+```
+
+### 2023 Correlation Matrix
+
+```{r}
+currentdata <- currentdata %>% 
+  inner_join(citydata2, by = "team.name")
+
+currentdata <- select(currentdata, feet.above.sea.level, income.tax.percentage, city.population, team.payroll, w)
+
+corr3 <- cor(currentdata)
+
+p.mat <- cor_pmat(currentdata)
+
+ggcorrplot(corr3, method = "circle")
+```
+
+### Explanation
+
+Red circles indicate a positive correlation and purple circles indicate a negative correlation. The darker colors show more of a correlation, as shown by the legend.
+
+From 2018-2022, there are larger correlations between payroll, wins, and city population. Feet above sea level have a negative correlation with all other factors.
+
+In 2022 alone, most red circles get bigger, showing more correlation between those factors. However, there is less correlation between income tax and wins.
+
+So far in 2023, there is significantly less correlation between wins and payroll, because of Tampa Bay. Also, since Tampa Bay is located in Florida, a state with no income tax, and really located in St. Petersburg, with less residents than Tampa Bay, there is also less correlation between city population and payroll/wins, and no change in correlation of income tax. 
+
+### Final Thoughts
+
+Most data was collected and compiled by the author. This was done carefully, but errors are entirely possible. Most payroll spent on coaches, managers, and analyst teams are private. This could contribute to wins alongside team (player) payroll and change the outcome of correlation. For the sake of this project, this has been disregarded.
+
+Resources:
+
+[2023 payroll](https://www.spotrac.com/mlb/payroll/)
+
+[previous years payroll](https://www.thebaseballcube.com/content/payroll/)
+
+The great Baseball Reference, used for [stadings](https://www.baseball-reference.com/)
+
+Tommy Lasorda [quote](https://dodgerblue.com/best-tommy-lasorda-quotes-dodgers-hall-of-fame-manager/2022/01/07/#:~:text=%E2%80%9CThe%20best%20possible%20thing%20in,lies%20in%20a%20person's%20determination.%E2%80%9D)
+
+
+Author
+===
+
+Column {data-width=550}
+---
+
+### About the Author
+
+Margot Houser is currently a second-year student at the University of Dayton. She is pursuing a Bachelor's of Science in Applied Mathematical Economics with minors in Data Analytics and Computer Science. Her projected graduation is December 2024 and she hopes to one day have a career where she can combine two of her biggest passions: baseball and numbers.
+
+Margot loves baseball, spending time outdoors, being crafty, and hanging out with her three-year-old sister. She also participates in both the Pride of Dayton Marching Band and Flyer Pep Band. 
+
+This summer, Margot will be working with the Akron Rubberducks, the Cleveland Guardians AA affiliate, as a finance and media relations intern.
+
+Connect with her on LinkedIn [here](https://www.linkedin.com/in/margot-houser/)
